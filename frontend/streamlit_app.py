@@ -42,7 +42,10 @@ with tab1:
         }
         try:
             response = requests.post(f"{BACKEND_URL}/v1/predict", json=payload, timeout=15)
-            st.success(f"Prediction: {response.json()}") if response.status_code == 200 else st.error(response.text)
+            if response.status_code == 200:
+                st.success(f"Prediction: {response.json()}")
+            else:
+                st.error(response.text)
         except requests.exceptions.RequestException as e:
             st.error(f"Could not reach backend API: {e}")
 
