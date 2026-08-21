@@ -3,16 +3,22 @@ import requests
 import pandas as pd
 import streamlit as st
 
+# When both containers run on the same Docker network, "backend" resolves to
+# the Flask container by its container name. Override with an env var if you
+# name the container differently.
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://backend:7860")
-REFERENCE_YEAR = 2026  # must match the backend's REFERENCE_YEAR
 
 st.set_page_config(page_title="SuperKart Sales Predictor", layout="centered")
 st.title("SuperKart — Product Store Sales Predictor")
 
 tab1, tab2 = st.tabs(["Single Prediction", "Batch Prediction"])
 
+# ------------------------------------------------------------------------------
+# Online (single-record) prediction
+# ------------------------------------------------------------------------------
 with tab1:
     st.subheader("Enter product & store details")
+
     col1, col2 = st.columns(2)
     with col1:
         product_id = st.text_input("Product Id", value="FDA15")
@@ -21,47 +27,60 @@ with tab1:
         product_allocated_area = st.number_input("Product Allocated Area", min_value=0.0, max_value=1.0, value=0.03, step=0.01)
         product_mrp = st.number_input("Product MRP", min_value=0.0, value=117.08, step=0.01)
     with col2:
-        product_type_category = st.selectbox("Product Type Category", ["Perishables", "Non Perishables"])
-        store_establishment_year = st.number_input("Store Establishment Year", min_value=1980, max_value=REFERENCE_YEAR, value=2010, step=1)
+        product_type = st.selectbox(
+            "Product Type",
+            ["Fruits and Vegetables", "Snack Foods", "Household", "Frozen Foods",
+             "Dairy", "Canned", "Baking Goods", "Health and Hygiene", "Soft Drinks",
+             "Meat", "Breads", "Hard Drinks", "Others", "Starchy Foods", "Breakfast", "Seafood"]
+        )
+        store_establishment_year = st.number_input("Store Establishment Year", min_value=1980, max_value=2026, value=2010, step=1)
         store_size = st.selectbox("Store Size", ["Small", "Medium", "High"])
         store_location_city_type = st.selectbox("Store Location City Type", ["Tier 1", "Tier 2", "Tier 3"])
         store_type = st.selectbox("Store Type", ["Supermarket Type1", "Supermarket Type2", "Departmental Store", "Food Mart"])
 
     if st.button("Predict Sales"):
         payload = {
+            "Product_Id": product_id,
             "Product_Weight": product_weight,
             "Product_Sugar_Content": product_sugar_content,
             "Product_Allocated_Area": product_allocated_area,
             "Product_MRP": product_mrp,
+            "Product_Type": product_type,
+            "Store_Establishment_Year": store_establishment_year,
             "Store_Size": store_size,
             "Store_Location_City_Type": store_location_city_type,
             "Store_Type": store_type,
-            "Product_Id_char": product_id[:2].upper(),
-            "Store_Age_Years": REFERENCE_YEAR - store_establishment_year,
-            "Product_Type_Category": product_type_category,
         }
         try:
             response = requests.post(f"{BACKEND_URL}/v1/predict", json=payload, timeout=15)
-            st.success(f"Prediction: {response.json()}") if response.status_code == 200 else st.error(response.text)
+            if response.status_code == 200:
+                st.success(f"Prediction: {response.json()}")
+            else:
+                st.error(f"API Error {response.status_code}: {response.text}")
         except requests.exceptions.RequestException as e:
             st.error(f"Could not reach backend API: {e}")
 
+# ------------------------------------------------------------------------------
+# Batch prediction
+# ------------------------------------------------------------------------------
 with tab2:
     st.subheader("Upload a CSV for batch predictions")
     st.caption(
-        "The CSV must contain: Product_Weight, Product_Sugar_Content, Product_Allocated_Area, "
-        "Product_MRP, Store_Size, Store_Location_City_Type, Store_Type, Product_Id_char, "
-        "Store_Age_Years, Product_Type_Category"
+        "The CSV must contain: Product_Id, Product_Weight, Product_Sugar_Content, "
+        "Product_Allocated_Area, Product_MRP, Product_Type, Store_Establishment_Year, "
+        "Store_Size, Store_Location_City_Type, Store_Type"
     )
     uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
+
     if uploaded_file is not None and st.button("Run Batch Prediction"):
         try:
             files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "text/csv")}
             response = requests.post(f"{BACKEND_URL}/v1/predictbatch", files=files, timeout=60)
             if response.status_code == 200:
-                pred_df = pd.DataFrame(list(response.json().items()), columns=["Row_Index", "Predicted_Sales"])
+                predictions = response.json()
+                pred_df = pd.DataFrame(list(predictions.items()), columns=["Row_Index", "Predicted_Sales"])
                 st.dataframe(pred_df)
             else:
-                st.error(response.text)
+                st.error(f"API Error {response.status_code}: {response.text}")
         except requests.exceptions.RequestException as e:
             st.error(f"Could not reach backend API: {e}")
